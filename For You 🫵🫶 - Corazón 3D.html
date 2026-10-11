@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>For You 🫵🫶 - Corazón 3D</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+:root{--bg:#030106;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:#fff;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;-webkit-user-select:none}
+#glow{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0;will-change:opacity;
+ background:radial-gradient(circle at 50% 48%,rgba(255,30,80,.35) 0%,rgba(120,0,40,.12) 32%,transparent 62%)}
+#c{position:fixed;inset:0;z-index:1;cursor:grab;touch-action:none}
+#c:active{cursor:grabbing}
+#intro{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:10;pointer-events:none;transition:opacity .8s}
+.t{font-size:clamp(2.5rem,8vw,5.5rem);font-weight:800;letter-spacing:.1em;text-align:center;padding:0 20px;opacity:0;
+ text-shadow:0 0 14px rgba(255,80,120,.8);will-change:transform,opacity;animation:ti 2.6s ease-in-out forwards}
+@keyframes ti{0%{opacity:0;transform:scale(.8)}25%{opacity:1;transform:scale(1.05)}75%{opacity:1;transform:scale(1.02)}100%{opacity:0;transform:scale(1.12) translateY(-10px)}}
+@media (prefers-reduced-motion:reduce){.t{animation-duration:.01s}}
+</style>
+</head>
+<body>
+<div id="glow"></div>
+<div id="intro"><h1 class="t">FOR YOU🫵🫶</h1></div>
+<canvas id="c"></canvas>
+
+<script>
+const VERT=`
+uniform float uTime,uProgress,uBeat,uPixel,uSize;
+attribute vec3 aStart; attribute float aOrder,aRand;
+varying float vAlpha,vFront; varying vec3 vCol;
+void main(){
+  float t=clamp((uProgress-aOrder*0.65)/0.35,0.,1.);
+  float e=1.-pow(1.-t,3.);
+  vec3 p=mix(aStart,position,e);
+  float ang=(1.-e)*3.2*(.5+aRand);
+  float c=cos(ang),s=sin(ang);
+  p.xz=mat2(c,-s,s,c)*p.xz;
+  float h=clamp((position.y+14.)/30.,0.,1.);
+  float pump=uBeat*(.075+.03*sin(h*7.-uTime*3.));
+  p*=1.+pump*e;
+  p+=normalize(position)*sin(uTime*1.6+aRand*6.28)*.1*e;
+  vec4 wp=modelMatrix*vec4(p,1.);
+  vec4 mv=viewMatrix*wp;
+  gl_Position=projectionMatrix*mv;
+  vec3 n=normalize(mat3(modelMatrix)*normalize(position-vec3(0.,1.,0.)));
+  vec3 vd=normalize(cameraPosition-wp.xyz);
+  float d=dot(n,vd);
+  float rim=1.-abs(d);
+  float front=smoothstep(0.,.12,t)*(1.-smoothstep(.5,1.,t));
+  vFront=front;
+  vAlpha=smoothstep(0.,.08,t)*(.3+.7*(d*.5+.5))*(.55+.9*rim);
+  vCol=mix(vec3(1.,.08,.22),vec3(1.,.5,.68),h)+vec3(.55)*rim*rim;
+  gl_PointSize=uSize*uPixel*(1.+front*.6)*(42./-mv.z)*(.7+.6*aRand);
+}`;
+const FRAG_P=`
+varying float vAlpha,vFront; varying vec3 vCol;
+void main(){
+  float r=length(gl_PointCoord-.5); if(r>.5) discard;
+  float g=pow(1.-r*2.,2.);
+  vec3 col=mix(vCol,vec3(1.),vFront);
+  gl_FragColor=vec4(col*(.55+g),vAlpha*g*1.25);
+}`;
+const FRAG_L=`
+varying float vAlpha,vFront; varying vec3 vCol;
+void main(){
+  vec3 col=mix(vCol,vec3(1.),vFront);
+  gl_FragColor=vec4(col,vAlpha*.2+vFront*.12);
+}`;
+
+// Corazón implícito 3D: (x²+9/4y²+z²-1)³ - x²z³ - 9/80 y²z³ = 0
+const f=(x,y,z)=>{const a=x*x+2.25*y*y+z*z-1;return a*a*a-x*x*z*z*z-.1125*y*y*z*z*z};
+function radius(dx,dy,dz){
+  let r=.3;const st=.03;
+  while(r<2&&f(dx*r,dy*r,dz*r)<0)r+=st;
+  let lo=r-st,hi=r;
+  for(let k=0;k<14;k++){const m=(lo+hi)/2;f(dx*m,dy*m,dz*m)<0?lo=m:hi=m}
+  return(lo+hi)/2;
+}
+
+const NT=64,NP=120,S=12.5;
+const pos=[],start=[],order=[],rnd=[],idx=[];
+for(let i=1;i<NT;i++){
+  const th=i/NT*Math.PI;
+  for(let j=0;j<NP;j++){
+    const ph=j/NP*Math.PI*2;
+    const dx=Math.sin(th)*Math.cos(ph),dy=Math.sin(th)*Math.sin(ph),dz=Math.cos(th);
+    const r=radius(dx,dy,dz);
+    const x=dx*r*S,y=(dz*r-.1)*S,z=dy*r*S*1.1;
+    pos.push(x,y,z);
+    const u=Math.random()*6.283,w=Math.acos(2*Math.random()-1),R=35+Math.random()*45;
+    start.push(R*Math.sin(w)*Math.cos(u),R*Math.sin(w)*Math.sin(u)-10,R*Math.cos(w));
+    const hN=Math.min(1,Math.max(0,(y+14)/30));
+    order.push(Math.min(1,hN*.72+(j/NP)*.25+Math.random()*.03));
+    rnd.push(Math.random());
+  }
+}
+const id=(i,j)=>(i-1)*NP+(j%NP);
+for(let i=1;i<NT;i++)for(let j=0;j<NP;j++){
+  idx.push(id(i,j),id(i,j+1));
+  if(j%2===0&&i<NT-1)idx.push(id(i,j),id(i+1,j));
+}
+
+const canvas=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+renderer.setSize(innerWidth,innerHeight);
+renderer.setClearColor(0x030106,1);
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,.1,500);
+const group=new THREE.Group();scene.add(group);
+
+const uniforms={uTime:{value:0},uProgress:{value:0},uBeat:{value:0},uPixel:{value:renderer.getPixelRatio()},uSize:{value:3.2}};
+const mk=()=>{const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('aStart',new THREE.Float32BufferAttribute(start,3));
+  g.setAttribute('aOrder',new THREE.Float32BufferAttribute(order,1));
+  g.setAttribute('aRand',new THREE.Float32BufferAttribute(rnd,1));return g};
+const base={uniforms,vertexShader:VERT,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending};
+const pts=new THREE.Points(mk(),new THREE.ShaderMaterial({...base,fragmentShader:FRAG_P}));
+const lg=mk();lg.setIndex(new THREE.BufferAttribute(new Uint16Array(idx),1));
+const lines=new THREE.LineSegments(lg,new THREE.ShaderMaterial({...base,fragmentShader:FRAG_L}));
+pts.frustumCulled=lines.frustumCulled=false;
+group.add(lines,pts);
+
+// Estrellas de fondo
+{const n=700,a=new Float32Array(n*3);
+ for(let i=0;i<n;i++){const u=Math.random()*6.283,w=Math.acos(2*Math.random()-1),R=90+Math.random()*80;
+  a[i*3]=R*Math.sin(w)*Math.cos(u);a[i*3+1]=R*Math.sin(w)*Math.sin(u);a[i*3+2]=R*Math.cos(w)}
+ const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(a,3));
+ var stars=new THREE.Points(g,new THREE.PointsMaterial({color:0xffb3c6,size:.7,transparent:true,opacity:.45,blending:THREE.AdditiveBlending,depthWrite:false}));
+ scene.add(stars)}
+
+// Chispas que suben del corazón
+const SN=200,sp=new Float32Array(SN*3),sc=new Float32Array(SN*3),life=new Float32Array(SN),spd=new Float32Array(SN);
+const sg=new THREE.BufferGeometry();
+sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+sg.setAttribute('color',new THREE.BufferAttribute(sc,3));
+const sparks=new THREE.Points(sg,new THREE.PointsMaterial({size:.55,vertexColors:true,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
+sparks.frustumCulled=false;group.add(sparks);
+function respawn(i){const k=Math.floor(Math.random()*pos.length/3)*3;
+  sp[i*3]=pos[k]*1.02;sp[i*3+1]=pos[k+1]*1.02;sp[i*3+2]=pos[k+2]*1.02;
+  life[i]=1;spd[i]=2+Math.random()*4}
+for(let i=0;i<SN;i++){respawn(i);life[i]=0}
+
+// Estado
+let building=false,buildT=0,time=0,done=false;
+const DUR=15;
+let rotV=0.0045,dragging=false,lx=0,ly=0,zoom=1,zoomT=1,tiltX=0;
+const ease=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
+const glow=document.getElementById('glow');let glowV='';
+
+function startBuild(){buildT=0;building=true;done=false;uniforms.uProgress.value=0;
+  for(let i=0;i<SN;i++)life[i]=0}
+setTimeout(()=>{document.getElementById('intro').style.display='none'},2600);
+setTimeout(startBuild,2700);
+
+canvas.addEventListener('pointerdown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;canvas.setPointerCapture(e.pointerId)});
+canvas.addEventListener('pointermove',e=>{if(!dragging)return;
+  rotV=(e.clientX-lx)*.006;group.rotation.y+=rotV;tiltX=Math.max(-.9,Math.min(.9,tiltX+(e.clientY-ly)*.004));lx=e.clientX;ly=e.clientY});
+canvas.addEventListener('pointerup',()=>{dragging=false});
+canvas.addEventListener('wheel',e=>{e.preventDefault();zoomT=Math.max(.55,Math.min(1.7,zoomT*(1+e.deltaY*.001)))},{passive:false});
+canvas.addEventListener('dblclick',startBuild);
+let lastTap=0;canvas.addEventListener('touchend',()=>{const n=Date.now();if(n-lastTap<300)startBuild();lastTap=n});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+
+const clock=new THREE.Clock();
+function frame(){
+  requestAnimationFrame(frame);
+  const dt=Math.min(clock.getDelta(),.05);time+=dt;
+  uniforms.uTime.value=time;
+
+  let prog=0;
+  if(building){buildT+=dt;prog=Math.min(1,buildT/DUR);
+    uniforms.uProgress.value=ease(prog);
+    if(prog>=1&&!done){done=true;for(let i=0;i<SN;i++){respawn(i);life[i]=Math.random()}}}
+  const ep=ease(prog);
+
+  // Latido: dos pulsos (lub-dub), crece al terminar la construcción
+  const p=time%1.15;
+  let beat=Math.exp(-Math.pow((p-.12)/.06,2))+.65*Math.exp(-Math.pow((p-.4)/.08,2));
+  beat*=Math.max(0,(ep-.8)/.2);
+  uniforms.uBeat.value=beat;
+  const go=(Math.min(1,ep*1.4)*.45+beat*.5).toFixed(2);if(go!==glowV){glowV=go;glow.style.opacity=go}
+
+  // Cámara: se acerca en espiral durante la construcción
+  zoom+=(zoomT-zoom)*.08;
+  const dist=(80-34*ease(Math.min(1,prog*1.1)))*zoom;
+  const ca=(1-ep)*1.1;
+  camera.position.set(Math.sin(ca)*dist*.35,2+(1-ep)*10,Math.cos(ca)*dist);
+  camera.lookAt(0,0,0);
+
+  // Rotación con inercia
+  if(!dragging){rotV+=(.0045-rotV)*.03;group.rotation.y+=rotV}
+  group.rotation.x+=((Math.sin(time*.4)*.06+tiltX)-group.rotation.x)*.06;
+  stars.rotation.y=time*.01;
+
+  // Chispas
+  if(done){for(let i=0;i<SN;i++){
+    life[i]-=dt*(.25+spd[i]*.06);
+    if(life[i]<=0)respawn(i);
+    sp[i*3+1]+=dt*spd[i];sp[i*3]*=1+dt*.02;sp[i*3+2]*=1+dt*.02;
+    const l=Math.max(0,life[i]);sc[i*3]=l;sc[i*3+1]=l*.35;sc[i*3+2]=l*.5}
+    sg.attributes.position.needsUpdate=true;sg.attributes.color.needsUpdate=true}
+  renderer.render(scene,camera);
+}
+frame();
+</script>
+</body>
+</html>
