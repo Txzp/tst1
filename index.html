@@ -19,6 +19,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:#fff
 .t{font-size:clamp(2.5rem,8vw,5.5rem);font-weight:800;letter-spacing:.1em;text-align:center;padding:0 20px;opacity:0;
  text-shadow:0 0 14px rgba(255,80,120,.8);will-change:transform,opacity;animation:ti 2.6s ease-in-out forwards}
 @keyframes ti{0%{opacity:0;transform:scale(.8)}25%{opacity:1;transform:scale(1.05)}75%{opacity:1;transform:scale(1.02)}100%{opacity:0;transform:scale(1.12) translateY(-10px)}}
+#mon{position:fixed;left:0;right:0;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:5;display:flex;align-items:center;justify-content:center;gap:14px;padding:0 16px;opacity:0;transition:opacity 1.5s;pointer-events:none}
+#bpm{display:inline-block;font-size:clamp(2rem,6vw,3rem);font-weight:800;color:#ff4d79;text-shadow:0 0 14px rgba(255,60,110,.8);font-variant-numeric:tabular-nums;min-width:2.2ch;text-align:right}
+#ecg{width:min(520px,68vw);height:72px}
 @media (prefers-reduced-motion:reduce){.t{animation-duration:.01s}}
 </style>
 </head>
@@ -26,6 +29,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:#fff
 <div id="glow"></div>
 <div id="intro"><h1 class="t">FOR YOU🫵🫶</h1></div>
 <canvas id="c"></canvas>
+<div id="mon"><span id="bpm">52</span><canvas id="ecg"></canvas></div>
 
 <script>
 const VERT=`
@@ -149,7 +153,7 @@ for(let i=0;i<SN;i++){respawn(i);life[i]=0}
 // Estado
 let building=false,buildT=0,time=0,done=false;
 const DUR=15;
-let rotV=0.0045,dragging=false,lx=0,ly=0,zoom=1,zoomT=1,tiltX=0;
+let rotV=0,dragging=false,lx=0,ly=0,zoom=1,zoomT=1,tiltX=0;
 const ease=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
 const glow=document.getElementById('glow');let glowV='';
 
@@ -163,9 +167,42 @@ canvas.addEventListener('pointermove',e=>{if(!dragging)return;
   rotV=(e.clientX-lx)*.006;group.rotation.y+=rotV;tiltX=Math.max(-.9,Math.min(.9,tiltX+(e.clientY-ly)*.004));lx=e.clientX;ly=e.clientY});
 canvas.addEventListener('pointerup',()=>{dragging=false});
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoomT=Math.max(.55,Math.min(1.7,zoomT*(1+e.deltaY*.001)))},{passive:false});
-canvas.addEventListener('dblclick',startBuild);
-let lastTap=0;canvas.addEventListener('touchend',()=>{const n=Date.now();if(n-lastTap<300)startBuild();lastTap=n});
+
+
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+
+// Monitor cardíaco: número + línea, sincronizado con el latido
+const mon=document.getElementById('mon'),bpmEl=document.getElementById('bpm'),ec=document.getElementById('ecg'),ex=ec.getContext('2d');
+const PER=1.15,SPEED=110;bpmEl.textContent=Math.round(60/PER);
+let EW=0,EH=0,vals=[],lastCol=-1;
+function sizeEcg(){const r=ec.getBoundingClientRect(),d=Math.min(devicePixelRatio,2);EW=Math.max(10,Math.floor(r.width));EH=Math.floor(r.height);ec.width=EW*d;ec.height=EH*d;ex.setTransform(d,0,0,d,0,0);vals=new Array(EW).fill(0);lastCol=-1}
+sizeEcg();addEventListener('resize',sizeEcg);
+const gs=(p,m,s)=>Math.exp(-Math.pow((p-m)/s,2));
+const wave=t=>{const p=((t%PER)+PER)%PER;return .9*gs(p,.12,.012)-.18*gs(p,.1,.008)-.3*gs(p,.145,.01)+.25*gs(p,.4,.05)};
+function drawEcg(t,beat){
+  const head=Math.floor((t*SPEED)%EW);
+  if(lastCol<0)lastCol=head;
+  let c=lastCol;
+  while(c!==head){c=(c+1)%EW;vals[c]=wave(t-((head-c+EW)%EW)/SPEED)}
+  lastCol=head;
+  ex.clearRect(0,0,EW,EH);
+  const Y=v=>EH*.68-v*EH*.55,gap=24,CH=14;
+  ex.lineJoin='round';ex.lineCap='round';
+  for(let s=0;s<EW;s+=CH){
+    const e=Math.min(s+CH,EW-1),dm=(head-((s+e)>>1)+EW)%EW;
+    const a=Math.max(.1,1-dm/EW*1.1);
+    const path=new Path2D();let mv=false;
+    for(let k=s;k<=e;k++){const d=(head-k+EW)%EW;if(d>EW-gap){mv=false;continue}
+      const y=Y(vals[k]);mv?path.lineTo(k,y):path.moveTo(k,y);mv=true}
+    ex.save();ex.translate(3,4);ex.strokeStyle='rgba(110,0,35,'+(a*.7)+')';ex.lineWidth=2.6;ex.stroke(path);ex.restore();
+    ex.strokeStyle='rgba(255,50,100,'+(a*.18)+')';ex.lineWidth=7;ex.stroke(path);
+    ex.strokeStyle='rgba(255,'+(110+a*100|0)+','+(150+a*90|0)+','+a+')';ex.lineWidth=2.2;ex.stroke(path);
+  }
+  const hy=Y(vals[head]);
+  ex.fillStyle='rgba(255,60,110,.3)';ex.beginPath();ex.arc(head,hy,8,0,6.283);ex.fill();
+  ex.fillStyle='#fff';ex.beginPath();ex.arc(head,hy,3,0,6.283);ex.fill();
+  bpmEl.style.transform='scale('+(1+beat*.12).toFixed(3)+')';
+}
 
 const clock=new THREE.Clock();
 function frame(){
@@ -176,7 +213,7 @@ function frame(){
   let prog=0;
   if(building){buildT+=dt;prog=Math.min(1,buildT/DUR);
     uniforms.uProgress.value=ease(prog);
-    if(prog>=1&&!done){done=true;for(let i=0;i<SN;i++){respawn(i);life[i]=Math.random()}}}
+    if(prog>=1&&!done){done=true;mon.style.opacity=1;for(let i=0;i<SN;i++){respawn(i);life[i]=Math.random()}}}
   const ep=ease(prog);
 
   // Latido: dos pulsos (lub-dub), crece al terminar la construcción
@@ -194,8 +231,8 @@ function frame(){
   camera.lookAt(0,0,0);
 
   // Rotación con inercia
-  if(!dragging){rotV+=(.0045-rotV)*.03;group.rotation.y+=rotV}
-  group.rotation.x+=((Math.sin(time*.4)*.06+tiltX)-group.rotation.x)*.06;
+  if(!dragging){rotV*=.92;group.rotation.y+=rotV}
+  group.rotation.x+=(tiltX-group.rotation.x)*.12;
   stars.rotation.y=time*.01;
 
   // Chispas
@@ -205,6 +242,7 @@ function frame(){
     sp[i*3+1]+=dt*spd[i];sp[i*3]*=1+dt*.02;sp[i*3+2]*=1+dt*.02;
     const l=Math.max(0,life[i]);sc[i*3]=l;sc[i*3+1]=l*.35;sc[i*3+2]=l*.5}
     sg.attributes.position.needsUpdate=true;sg.attributes.color.needsUpdate=true}
+  if(done)drawEcg(time,beat);
   renderer.render(scene,camera);
 }
 frame();
